@@ -1058,8 +1058,8 @@ class NestedDirectoryStore(DirectoryStore):
 
     """
 
-    def __init__(self, path, normalize_keys=False):
-        super(NestedDirectoryStore, self).__init__(path, normalize_keys=normalize_keys)
+    def __init__(self, path, normalize_keys=False, fs=None):
+        super(NestedDirectoryStore, self).__init__(path, normalize_keys=normalize_keys, fs)
 
     def __getitem__(self, key):
         key = _nested_map_ckey(key)
@@ -1092,8 +1092,8 @@ class NestedDirectoryStore(DirectoryStore):
             root_path = self.dir_path(path)
             for entry in children:
                 entry_path = os.path.join(root_path, entry)
-                if _prog_number.match(entry) and os.path.isdir(entry_path):
-                    for dir_path, _, file_names in os.walk(entry_path):
+                if _prog_number.match(entry) and self._fs.isdir(entry_path):
+                    for dir_path, _, file_names in self._fs.walk(entry_path):
                         for file_name in file_names:
                             file_path = os.path.join(dir_path, file_name)
                             rel_path = file_path.split(root_path + os.path.sep)[1]
