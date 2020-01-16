@@ -1059,7 +1059,7 @@ class NestedDirectoryStore(DirectoryStore):
     """
 
     def __init__(self, path, normalize_keys=False, fs=None):
-        super(NestedDirectoryStore, self).__init__(path, normalize_keys=normalize_keys, fs)
+        super(NestedDirectoryStore, self).__init__(path, normalize_keys=normalize_keys, fs=fs)
 
     def __getitem__(self, key):
         key = _nested_map_ckey(key)
