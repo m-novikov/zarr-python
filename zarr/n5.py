@@ -68,7 +68,6 @@ class N5Store(NestedDirectoryStore):
     """
 
     def __getitem__(self, key):
-
         if key.endswith(zarr_group_meta_key):
 
             key = key.replace(zarr_group_meta_key, n5_attrs_key)

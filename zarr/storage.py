@@ -741,7 +741,7 @@ class DirectoryStore(MutableMapping):
             self._fs = fsspec.filesystem("file")
 
         # guard conditions
-        path = os.path.abspath(path)
+        #path = os.path.abspath(path)
         if self._fs.exists(path) and not self._fs.isdir(path):
             err_fspath_exists_notdir(path)
 
