@@ -34,6 +34,7 @@ from pickle import PicklingError
 from threading import Lock, RLock
 import uuid
 import time
+import fsspec
 
 from numcodecs.compat import ensure_bytes, ensure_contiguous_ndarray
 from numcodecs.registry import codec_registry
@@ -734,11 +735,14 @@ class DirectoryStore(MutableMapping):
 
     """
 
-    def __init__(self, path, normalize_keys=False):
+    def __init__(self, path, normalize_keys=False, fs=None):
+        self._fs = fs
+        if self._fs is None:
+            self._fs = fsspec.filesystem("file")
 
         # guard conditions
         path = os.path.abspath(path)
-        if os.path.exists(path) and not os.path.isdir(path):
+        if self._fs.exists(path) and not self._fs.isdir(path):
             err_fspath_exists_notdir(path)
 
         self.path = path
@@ -760,7 +764,7 @@ class DirectoryStore(MutableMapping):
         Subclasses should overload this method to specify any custom
         file reading logic.
         """
-        with open(fn, 'rb') as f:
+        with self._fs.open(fn, mode="rb") as f:
             return f.read()
 
     def _tofile(self, a, fn):
@@ -779,13 +783,13 @@ class DirectoryStore(MutableMapping):
         Subclasses should overload this method to specify any custom
         file writing logic.
         """
-        with open(fn, mode='wb') as f:
+        with self._fs.open(fn, mode="wb") as f:
             f.write(a)
 
     def __getitem__(self, key):
         key = self._normalize_key(key)
         filepath = os.path.join(self.path, key)
-        if os.path.isfile(filepath):
+        if self._fs.isfile(filepath):
             return self._fromfile(filepath)
         else:
             raise KeyError(key)
@@ -800,16 +804,16 @@ class DirectoryStore(MutableMapping):
         file_path = os.path.join(self.path, key)
 
         # ensure there is no directory in the way
-        if os.path.isdir(file_path):
-            shutil.rmtree(file_path)
+        if self._fs.isdir(file_path):
+            self._fs.rm(file_path, recursive=True)
 
         # ensure containing directory exists
         dir_path, file_name = os.path.split(file_path)
-        if os.path.isfile(dir_path):
+        if self._fs.isfile(dir_path):
             raise KeyError(key)
-        if not os.path.exists(dir_path):
+        if not self._fs.exists(dir_path):
             try:
-                os.makedirs(dir_path)
+                self._fs.makedirs(dir_path)
             except OSError as e:
                 if e.errno != errno.EEXIST:
                     raise KeyError(key)
@@ -826,25 +830,25 @@ class DirectoryStore(MutableMapping):
 
         finally:
             # clean up if temp file still exists for whatever reason
-            if os.path.exists(temp_path):  # pragma: no cover
-                os.remove(temp_path)
+            if self._fs.exists(temp_path):  # pragma: no cover
+                self._fs.rm(temp_path)
 
     def __delitem__(self, key):
         key = self._normalize_key(key)
         path = os.path.join(self.path, key)
-        if os.path.isfile(path):
-            os.remove(path)
-        elif os.path.isdir(path):
+        if self._fs.isfile(path):
+            self._fs.rm(path)
+        elif self._fs.isdir(path):
             # include support for deleting directories, even though strictly
             # speaking these do not exist as keys in the store
-            shutil.rmtree(path)
+            self._fs.rm(path, recursive=True)
         else:
             raise KeyError(key)
 
     def __contains__(self, key):
         key = self._normalize_key(key)
         file_path = os.path.join(self.path, key)
-        return os.path.isfile(file_path)
+        return self._fs.isfile(file_path)
 
     def __eq__(self, other):
         return (
@@ -853,15 +857,16 @@ class DirectoryStore(MutableMapping):
         )
 
     def keys(self):
-        if os.path.exists(self.path):
+        if self._fs.exists(self.path):
             directories = [(self.path, '')]
             while directories:
                 dir_name, prefix = directories.pop()
-                for name in os.listdir(dir_name):
+                for name in self._fs.ls(dir_name):
+                    name = name.replace(f"{dir_name}/", "", 1)
                     path = os.path.join(dir_name, name)
-                    if os.path.isfile(path):
+                    if self._fs.isfile(path):
                         yield prefix + name
-                    elif os.path.isdir(path):
+                    elif self._fs.isdir(path):
                         directories.append((path, prefix + name + '/'))
 
     def __iter__(self):
@@ -879,8 +884,8 @@ class DirectoryStore(MutableMapping):
 
     def listdir(self, path=None):
         dir_path = self.dir_path(path)
-        if os.path.isdir(dir_path):
-            return sorted(os.listdir(dir_path))
+        if self._fs.isdir(dir_path):
+            return sorted([path.replace(f"{dir_path}/", "", 1) for path in self._fs.ls(dir_path)])
         else:
             return []
 
@@ -893,34 +898,30 @@ class DirectoryStore(MutableMapping):
         src_path = os.path.join(dir_path, store_src_path)
         dst_path = os.path.join(dir_path, store_dst_path)
 
-        os.renames(src_path, dst_path)
+        self._fs.mv(src_path, dst_path)
 
     def rmdir(self, path=None):
         store_path = normalize_storage_path(path)
         dir_path = self.path
         if store_path:
             dir_path = os.path.join(dir_path, store_path)
-        if os.path.isdir(dir_path):
-            shutil.rmtree(dir_path)
+        if self._fs.isdir(dir_path):
+            self._fs.rm(dir_path, recursive=True)
 
     def getsize(self, path=None):
         store_path = normalize_storage_path(path)
         fs_path = self.path
         if store_path:
             fs_path = os.path.join(fs_path, store_path)
-        if os.path.isfile(fs_path):
-            return os.path.getsize(fs_path)
-        elif os.path.isdir(fs_path):
-            size = 0
-            for child in scandir(fs_path):
-                if child.is_file():
-                    size += child.stat().st_size
-            return size
+        if self._fs.isfile(fs_path):
+            return self._fs.size(fs_path)
+        elif self._fs.isdir(fs_path):
+            return self._fs.du(fs_path)
         else:
             return 0
 
     def clear(self):
-        shutil.rmtree(self.path)
+        self._fs.rm(self.path, recursive=True)
 
 
 def atexit_rmtree(path,
